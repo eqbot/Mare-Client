@@ -90,6 +90,7 @@ public class Configuration : IPluginConfiguration
 
     public bool ShowTransferWindow { get; set; } = true;
     public bool OpenPopupOnAdd { get; set; } = false;
+    public bool DisableVFXGlobal { get; set; } = false;
 
     // the below exist just to make saving less cumbersome
     public void Initialize(DalamudPluginInterface pluginInterface)

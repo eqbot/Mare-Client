@@ -1,13 +1,13 @@
 {
-  "Author": "darkarchon",
-  "Name": "Mare Synchronos",
-  "Punchline": "Let others see you as you see yourself.",
-  "Description": "This plugin will synchronize your Penumbra mods and current Glamourer state with other paired clients automatically.",
-  "InternalName": "mareSynchronos",
+  "Author": "darkarchon, eqbot",
+  "Name": "Mare Synchronos Client+",
+  "Punchline": "Expanded clientside settings for Mare Synchronos",
+  "Description": "Extra options for Mare Synchronos!",
+  "InternalName": "mareSynchronosClient+",
   "ApplicableVersion": "any",
   "Tags": [
     "customization"
   ],
-  "IconUrl": "https://raw.githubusercontent.com/Penumbra-Sync/client/main/MareSynchronos/images/logo.png",
-  "RepoUrl": "https://github.com/Penumbra-Sync/client"
+  "IconUrl": "https://raw.githubusercontent.com/eqbot/Mare-Client/privacy-settings/MareSynchronos/images/logo.png",
+  "RepoUrl": "https://github.com/eqbot/Mare-Client"
 }

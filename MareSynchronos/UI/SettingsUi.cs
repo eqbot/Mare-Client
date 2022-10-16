@@ -16,6 +16,7 @@ using Dalamud.Utility;
 namespace MareSynchronos.UI;
 
 public delegate void SwitchUi();
+public delegate void ChangeVFXEnabled();
 public class SettingsUi : Window, IDisposable
 {
     private readonly Configuration _configuration;
@@ -23,10 +24,12 @@ public class SettingsUi : Window, IDisposable
     private readonly ApiController _apiController;
     private readonly UiShared _uiShared;
     public event SwitchUi? SwitchToIntroUi;
+    public event ChangeVFXEnabled? ChangeVFX;
     private bool _overwriteExistingLabels = false;
     private bool? _notesSuccessfullyApplied = null;
     private string _lastTab = string.Empty;
     private bool _openPopupOnAddition;
+    private bool _disableVFXGlobal;
 
     public SettingsUi(WindowSystem windowSystem,
         UiShared uiShared, Configuration configuration, ApiController apiController) : base("Mare Synchronos Settings")
@@ -163,6 +166,13 @@ public class SettingsUi : Window, IDisposable
             _configuration.Save();
         }
         UiShared.DrawHelpText("This will open a popup that allows you to set the notes for a user after successfully adding them to your individual pairs.");
+
+        if (ImGui.Checkbox("Disable VFX globally", ref _disableVFXGlobal))
+        {
+            _configuration.DisableVFXGlobal = _disableVFXGlobal;
+            _configuration.Save();
+            ChangeVFX?.Invoke();
+        }
     }
 
     private void DrawAdministration()

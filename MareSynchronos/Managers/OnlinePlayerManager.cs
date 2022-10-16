@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MareSynchronos.API;
 using MareSynchronos.FileCache;
+using MareSynchronos.UI;
 using MareSynchronos.Utils;
 using MareSynchronos.WebAPI;
 using MareSynchronos.WebAPI.Utils;
@@ -19,6 +20,8 @@ public class OnlinePlayerManager : IDisposable
     private readonly IpcManager _ipcManager;
     private readonly PlayerManager _playerManager;
     private readonly FileCacheManager _fileDbManager;
+    private readonly Configuration _configuration;
+    private readonly SettingsUi _settingsUi;
     private readonly ConcurrentDictionary<string, CachedPlayer> _onlineCachedPlayers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CharacterCacheDto> _temporaryStoredCharacterCache = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<CachedPlayer, CancellationTokenSource> _playerTokenDisposal = new();
@@ -26,7 +29,7 @@ public class OnlinePlayerManager : IDisposable
     private List<string> OnlineVisiblePlayerHashes => _onlineCachedPlayers.Select(p => p.Value).Where(p => p.PlayerCharacter != IntPtr.Zero)
         .Select(p => p.PlayerNameHash).ToList();
 
-    public OnlinePlayerManager(ApiController apiController, DalamudUtil dalamudUtil, IpcManager ipcManager, PlayerManager playerManager, FileCacheManager fileDbManager)
+    public OnlinePlayerManager(ApiController apiController, DalamudUtil dalamudUtil, IpcManager ipcManager, Configuration configuration, PlayerManager playerManager, FileCacheManager fileDbManager, SettingsUi settingUi)
     {
         Logger.Verbose("Creating " + nameof(OnlinePlayerManager));
 
@@ -35,6 +38,8 @@ public class OnlinePlayerManager : IDisposable
         _ipcManager = ipcManager;
         _playerManager = playerManager;
         _fileDbManager = fileDbManager;
+        _configuration = configuration;
+        _settingsUi = settingUi;
         _apiController.PairedClientOnline += ApiControllerOnPairedClientOnline;
         _apiController.PairedClientOffline += ApiControllerOnPairedClientOffline;
         _apiController.Connected += ApiControllerOnConnected;
@@ -47,10 +52,18 @@ public class OnlinePlayerManager : IDisposable
         _dalamudUtil.LogOut += DalamudUtilOnLogOut;
         _dalamudUtil.ZoneSwitchStart += DalamudUtilOnZoneSwitched;
 
+        _settingsUi.ChangeVFX += SettingsOnChangedVFXToggle;
+
         if (_dalamudUtil.IsLoggedIn)
         {
             DalamudUtilOnLogIn();
         }
+    }
+
+    private void SettingsOnChangedVFXToggle()
+    {
+        RestoreAllCharacters();
+        ApiControllerOnConnected();
     }
 
     private void DalamudUtilOnZoneSwitched()
@@ -233,6 +246,6 @@ public class OnlinePlayerManager : IDisposable
 
     private CachedPlayer CreateCachedPlayer(string hashedName)
     {
-        return new CachedPlayer(hashedName, _ipcManager, _apiController, _dalamudUtil, _fileDbManager);
+        return new CachedPlayer(hashedName, _ipcManager, _apiController, _configuration, _dalamudUtil, _fileDbManager);
     }
 }

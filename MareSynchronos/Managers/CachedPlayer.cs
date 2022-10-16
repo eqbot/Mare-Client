@@ -19,14 +19,16 @@ public class CachedPlayer
     private readonly FileCacheManager fileDbManager;
     private readonly IpcManager _ipcManager;
     private readonly ApiController _apiController;
+    private readonly Configuration _configuration;
     private bool _isVisible;
 
-    public CachedPlayer(string nameHash, IpcManager ipcManager, ApiController apiController, DalamudUtil dalamudUtil, FileCacheManager fileDbManager)
+    public CachedPlayer(string nameHash, IpcManager ipcManager, ApiController apiController, Configuration configuration, DalamudUtil dalamudUtil, FileCacheManager fileDbManager)
     {
         PlayerNameHash = nameHash;
         _ipcManager = ipcManager;
         _apiController = apiController;
         _dalamudUtil = dalamudUtil;
+        _configuration = configuration;
         this.fileDbManager = fileDbManager;
     }
 
@@ -234,6 +236,28 @@ public class CachedPlayer
 
     private void ApplyBaseData(Dictionary<string, string> moddedPaths)
     {
+        //Block out VFX files if needed
+        if (_configuration.DisableVFXGlobal)
+        {
+            string[] vfxExt = { ".tmb", ".pap", ".avfx", ".scd"};
+            List<string> gamePathsToPrune = new List<string>();
+            foreach(string path in moddedPaths.Keys)
+            {
+                foreach(string ext in vfxExt)
+                {
+                    if (path.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                    {
+                        PluginLog.Debug($"Removing VFX file {path}");
+                        gamePathsToPrune.Add(path);
+                    }
+                }
+            }
+            foreach(string path in gamePathsToPrune)
+            {
+                moddedPaths.Remove(path);
+            }
+        }
+
         _ipcManager.PenumbraRemoveTemporaryCollection(PlayerName!);
         _ipcManager.PenumbraSetTemporaryMods(PlayerName!, moddedPaths, _cachedData.ManipulationData);
     }
