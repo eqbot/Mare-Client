@@ -3,7 +3,7 @@
   "Name": "Mare Synchronos Client+",
   "Punchline": "Expanded clientside settings for Mare Synchronos",
   "Description": "Extra options for Mare Synchronos!",
-  "InternalName": "mareSynchronosClient+",
+  "InternalName": "mareSynchronos",
   "ApplicableVersion": "any",
   "Tags": [
     "customization"
