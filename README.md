@@ -7,3 +7,6 @@ Available at [This dalamud Repo](https://raw.githubusercontent.com/eqbot/Dalamud
 If you already setup Mare, you'll have to either have your private key saved, or go get it from %APPDATA%\XIVLauncher\pluginConfigs\MareSynchronos.json
 
 You can also just copy that file to MareSynchronosPlus.json and it'll pick up / work
+
+#Added Features
+- Toggle to disable VFX sync (incoming) for all users.
