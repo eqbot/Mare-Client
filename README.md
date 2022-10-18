@@ -8,5 +8,5 @@ If you already setup Mare, you'll have to either have your private key saved, or
 
 You can also just copy that file to MareSynchronosPlus.json and it'll pick up / work
 
-#Added Features
+# Added Features
 - Toggle to disable VFX sync (incoming) for all users.
