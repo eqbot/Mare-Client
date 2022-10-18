@@ -47,6 +47,7 @@ public class SettingsUi : Window, IDisposable
         _apiController = apiController;
         _uiShared = uiShared;
         _openPopupOnAddition = _configuration.OpenPopupOnAdd;
+        _disableVFXGlobal = _configuration.DisableVFXGlobal;
         windowSystem.AddWindow(this);
     }
 
