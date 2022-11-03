@@ -128,6 +128,14 @@ public class CachedPlayer
                     charaDataToUpdate.Add(objectKind);
                     continue;
                 }
+
+                bool customizeDataDifferent = _cachedData.CustomizePlusData != characterData.CustomizePlusData;
+                if (customizeDataDifferent)
+                {
+                    Logger.Debug("Updating " + objectKind);
+                    charaDataToUpdate.Add(objectKind);
+                    continue;
+                }
             }
         }
 
@@ -272,6 +280,7 @@ public class CachedPlayer
             _dalamudUtil.WaitWhileCharacterIsDrawing(PlayerName!, PlayerCharacter, 10000, ct);
             ct.ThrowIfCancellationRequested();
             _ipcManager.HeelsSetOffsetForPlayer(_cachedData.HeelsOffset, PlayerCharacter);
+            _ipcManager.CustomizePlusSetBodyScale(PlayerCharacter, _cachedData.CustomizePlusData);
             RequestedPenumbraRedraw = true;
             Logger.Debug(
                 $"Request Redraw for {PlayerName}");
@@ -361,6 +370,7 @@ public class CachedPlayer
                 _ipcManager.GlamourerApplyOnlyCustomization(_originalGlamourerData, PlayerCharacter);
                 _ipcManager.GlamourerApplyOnlyEquipment(_lastGlamourerData, PlayerCharacter);
                 _ipcManager.HeelsRestoreOffsetForPlayer(PlayerCharacter);
+                _ipcManager.CustomizePlusRevert(PlayerCharacter);
             }
             else
             {

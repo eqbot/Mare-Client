@@ -267,6 +267,7 @@ public partial class ApiController : IDisposable, IMareHubClient
             Logger.Debug("Checked Client Health State, healthy: " + !needsRestart);
             if (needsRestart)
             {
+                ServerState = ServerState.Offline;
                 _ = CreateConnections();
             }
         }
@@ -319,9 +320,11 @@ public partial class ApiController : IDisposable, IMareHubClient
         _dalamudUtil.LogIn -= DalamudUtilOnLogIn;
         _dalamudUtil.LogOut -= DalamudUtilOnLogOut;
 
+        ServerState = ServerState.Offline;
         Task.Run(async () => await StopConnection(_connectionCancellationTokenSource.Token).ConfigureAwait(false));
         _connectionCancellationTokenSource?.Cancel();
         _healthCheckTokenSource?.Cancel();
+        _uploadCancellationTokenSource?.Cancel();
     }
 
     private HubConnection BuildHubConnection(string hubName)
@@ -380,7 +383,6 @@ public partial class ApiController : IDisposable, IMareHubClient
             await _mareHub.DisposeAsync().ConfigureAwait(false);
             CurrentUploads.Clear();
             CurrentDownloads.Clear();
-            _uploadCancellationTokenSource?.Cancel();
             Disconnected?.Invoke();
             _mareHub = null;
         }

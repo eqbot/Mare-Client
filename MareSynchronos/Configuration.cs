@@ -58,7 +58,6 @@ public static class ConfigurationExtensions
 public class Configuration : IPluginConfiguration
 {
     private string _apiUri = string.Empty;
-    private int _maxParallelScan = 10;
     [NonSerialized]
     private DalamudPluginInterface? _pluginInterface;
 
@@ -73,7 +72,7 @@ public class Configuration : IPluginConfiguration
     public string CacheFolder { get; set; } = string.Empty;
     public Dictionary<string, string> ClientSecret { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, string> CustomServerList { get; set; } = new(StringComparer.Ordinal);
-    public int MaxLocalCacheInGiB { get; set; } = 20;
+    public double MaxLocalCacheInGiB { get; set; } = 20;
     public bool ReverseUserSort { get; set; } = false;
 
     public int TimeSpanBetweenScansInSeconds { get; set; } = 30;

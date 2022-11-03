@@ -41,7 +41,7 @@ public class UiShared : IDisposable
     public bool UidFontBuilt { get; private set; }
     public static bool CtrlPressed() => (GetKeyState(0xA2) & 0x8000) != 0 || (GetKeyState(0xA3) & 0x8000) != 0;
     public static bool ShiftPressed() => (GetKeyState(0xA1) & 0x8000) != 0 || (GetKeyState(0xA0) & 0x8000) != 0;
-    
+
     public static ImGuiWindowFlags PopupWindowFlags = ImGuiWindowFlags.NoResize |
                                            ImGuiWindowFlags.NoScrollbar |
                                            ImGuiWindowFlags.NoScrollWithMouse;
@@ -115,10 +115,10 @@ public class UiShared : IDisposable
             var center = ImGui.GetMainViewport().GetCenter();
             ImGui.SetWindowPos(new Vector2(center.X - x / 2, center.Y - y / 2));
         }
-        
+
         ImGui.SetWindowSize(new Vector2(x, y));
     }
-    
+
     public static void SetScaledWindowSize(float width, float height, bool centerWindow = true)
     {
         ImGui.SameLine();
@@ -130,7 +130,7 @@ public class UiShared : IDisposable
             var center = ImGui.GetMainViewport().GetCenter();
             ImGui.SetWindowPos(new Vector2(center.X - x / 2, center.Y - y / 2));
         }
-        
+
         ImGui.SetWindowSize(new Vector2(x, y));
     }
 
@@ -154,10 +154,12 @@ public class UiShared : IDisposable
         var penumbraExists = _ipcManager.CheckPenumbraApi();
         var glamourerExists = _ipcManager.CheckGlamourerApi();
         var heelsExists = _ipcManager.CheckHeelsApi();
+        var customizeExists = _ipcManager.CheckCustomizePlusApi();
 
         var penumbraColor = penumbraExists ? ImGuiColors.ParsedGreen : ImGuiColors.DalamudRed;
         var glamourerColor = glamourerExists ? ImGuiColors.ParsedGreen : ImGuiColors.DalamudRed;
         var heelsColor = heelsExists ? ImGuiColors.ParsedGreen : ImGuiColors.DalamudRed;
+        var customizeColor = customizeExists ? ImGuiColors.ParsedGreen : ImGuiColors.DalamudRed;
         ImGui.Text("Penumbra:");
         ImGui.SameLine();
         ImGui.TextColored(penumbraColor, penumbraExists ? "Available" : "Unavailable");
@@ -170,6 +172,10 @@ public class UiShared : IDisposable
         ImGui.Text("Heels:");
         ImGui.SameLine();
         ImGui.TextColored(heelsColor, heelsExists ? "Available" : "Unavailable");
+        ImGui.SameLine();
+        ImGui.Text("Customize+:");
+        ImGui.SameLine();
+        ImGui.TextColored(customizeColor, customizeExists ? "Available" : "Unavailable");
 
         if (!penumbraExists || !glamourerExists)
         {
@@ -400,10 +406,9 @@ public class UiShared : IDisposable
 
         if (_enterSecretKey)
         {
-            ColorTextWrapped("This will overwrite your currently used secret key for the selected service. Make sure to have a backup for the current secret key if you want to switch back to this account.", ImGuiColors.DalamudYellow);
-            if (!_pluginConfiguration.ClientSecret.ContainsKey(_pluginConfiguration.ApiUri))
+            if (_pluginConfiguration.ClientSecret.ContainsKey(_pluginConfiguration.ApiUri))
             {
-                ColorTextWrapped("IF YOU HAVE NEVER MADE AN ACCOUNT BEFORE DO NOT ENTER ANYTHING HERE", ImGuiColors.DalamudYellow);
+                ColorTextWrapped("A secret key was previously set for this service. Entering a new secret key will overwrite the one set prior.", ImGuiColors.DalamudYellow);
             }
 
             var text = "Enter Secret Key";
@@ -525,8 +530,8 @@ public class UiShared : IDisposable
                              "Restrict yourself to latin letters (A-Z), underscores (_), dashes (-) and arabic numbers (0-9).", ImGuiColors.DalamudRed);
         }
 
-        int maxCacheSize = _pluginConfiguration.MaxLocalCacheInGiB;
-        if (ImGui.SliderInt("Maximum Cache Size in GB", ref maxCacheSize, 1, 50, "%d GB"))
+        float maxCacheSize = (float)_pluginConfiguration.MaxLocalCacheInGiB;
+        if (ImGui.SliderFloat("Maximum Cache Size in GiB", ref maxCacheSize, 1f, 200f, "%.2f GiB"))
         {
             _pluginConfiguration.MaxLocalCacheInGiB = maxCacheSize;
             _pluginConfiguration.Save();
