@@ -253,7 +253,7 @@ public class CachedPlayer
             {
                 foreach(string ext in vfxExt)
                 {
-                    if (path.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                    if (path.EndsWith(ext, StringComparison.OrdinalIgnoreCase) && !path.Equals("chara/action/emote_sp/sp41_loop.tmb"))
                     {
                         PluginLog.Debug($"Removing VFX file {path}");
                         gamePathsToPrune.Add(path);
