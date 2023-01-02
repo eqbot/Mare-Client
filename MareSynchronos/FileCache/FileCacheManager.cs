@@ -10,14 +10,6 @@ using System.Text;
 
 namespace MareSynchronos.FileCache;
 
-
-public enum FileState
-{
-    Valid,
-    RequireUpdate,
-    RequireDeletion
-}
-
 public class FileCacheManager : IDisposable
 {
     private const string PenumbraPrefix = "{penumbra}";
@@ -36,9 +28,12 @@ public class FileCacheManager : IDisposable
         _configuration = configuration;
         CsvPath = Path.Combine(configDirectoryName, "FileCache.csv");
 
-        if (File.Exists(CsvBakPath))
+        lock (_fileWriteLock)
         {
-            File.Move(CsvBakPath, CsvPath, true);
+            if (File.Exists(CsvBakPath))
+            {
+                File.Move(CsvBakPath, CsvPath, true);
+            }
         }
 
         if (File.Exists(CsvPath))
@@ -52,7 +47,7 @@ public class FileCacheManager : IDisposable
                     var hash = splittedEntry[0];
                     var path = splittedEntry[1];
                     var time = splittedEntry[2];
-                    FileCaches[path] = new FileCacheEntity(hash, path, time);
+                    FileCaches[path] = ReplacePathPrefixes(new FileCacheEntity(hash, path, time));
                 }
                 catch (Exception)
                 {
@@ -117,8 +112,8 @@ public class FileCacheManager : IDisposable
 
     public FileCacheEntity? GetFileCacheByPath(string path)
     {
-        var cleanedPath = path.Replace("/", "\\", StringComparison.Ordinal).ToLowerInvariant().Replace(_ipcManager.PenumbraModDirectory()!.ToLowerInvariant(), "", StringComparison.Ordinal);
-        var entry = FileCaches.FirstOrDefault(f => f.Value.ResolvedFilepath.EndsWith(cleanedPath, StringComparison.Ordinal)).Value;
+        var cleanedPath = path.Replace("/", "\\", StringComparison.OrdinalIgnoreCase).ToLowerInvariant().Replace(_ipcManager.PenumbraModDirectory()!.ToLowerInvariant(), "", StringComparison.OrdinalIgnoreCase);
+        var entry = FileCaches.FirstOrDefault(f => f.Value.ResolvedFilepath.EndsWith(cleanedPath, StringComparison.OrdinalIgnoreCase)).Value;
 
         if (entry == null)
         {
@@ -222,6 +217,11 @@ public class FileCacheManager : IDisposable
         }
 
         return fileCache;
+    }
+
+    public string ResolveFileReplacement(string gamePath)
+    {
+        return _ipcManager.PenumbraResolvePath(gamePath);
     }
 
     public void Dispose()

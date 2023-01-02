@@ -8,14 +8,13 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Client.System.Resource;
 using MareSynchronos.API;
-using MareSynchronos.FileCache;
 using MareSynchronos.Interop;
 using MareSynchronos.Managers;
 using MareSynchronos.Models;
 using MareSynchronos.Utils;
-using Penumbra.GameData.ByteString;
 using Penumbra.Interop.Structs;
 using Object = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Object;
+using Penumbra.String;
 using Weapon = MareSynchronos.Interop.Weapon;
 
 namespace MareSynchronos.Factories;
@@ -24,16 +23,16 @@ public class CharacterDataFactory
 {
     private readonly DalamudUtil _dalamudUtil;
     private readonly IpcManager _ipcManager;
-    private readonly TransientResourceManager transientResourceManager;
-    private readonly FileCacheManager fileDbManager;
+    private readonly TransientResourceManager _transientResourceManager;
+    private readonly FileReplacementFactory _fileReplacementFactory;
 
-    public CharacterDataFactory(DalamudUtil dalamudUtil, IpcManager ipcManager, TransientResourceManager transientResourceManager, FileCacheManager fileDbManager)
+    public CharacterDataFactory(DalamudUtil dalamudUtil, IpcManager ipcManager, TransientResourceManager transientResourceManager, FileReplacementFactory fileReplacementFactory)
     {
         Logger.Verbose("Creating " + nameof(CharacterDataFactory));
-        this.fileDbManager = fileDbManager;
         _dalamudUtil = dalamudUtil;
         _ipcManager = ipcManager;
-        this.transientResourceManager = transientResourceManager;
+        _transientResourceManager = transientResourceManager;
+        _fileReplacementFactory = fileReplacementFactory;
     }
 
     private unsafe bool CheckForPointer(IntPtr playerPointer)
@@ -117,7 +116,7 @@ public class CharacterDataFactory
         string mdlPath;
         try
         {
-            mdlPath = new Utf8String(mdl->ResourceHandle->FileName()).ToString();
+            mdlPath = new ByteString(mdl->ResourceHandle->FileName()).ToString();
         }
         catch
         {
@@ -145,7 +144,7 @@ public class CharacterDataFactory
         string fileName;
         try
         {
-            fileName = new Utf8String(mtrl->ResourceHandle->FileName()).ToString();
+            fileName = new ByteString(mtrl->ResourceHandle->FileName()).ToString();
 
         }
         catch
@@ -176,7 +175,7 @@ public class CharacterDataFactory
             string? texPath = null;
             try
             {
-                texPath = new Utf8String(mtrlResourceHandle->TexString(resIdx)).ToString();
+                texPath = new ByteString(mtrlResourceHandle->TexString(resIdx)).ToString();
             }
             catch
             {
@@ -188,6 +187,17 @@ public class CharacterDataFactory
             Logger.Verbose("Checking File Replacement for Texture " + texPath);
 
             AddReplacementsFromTexture(texPath, objectKind, cache, inheritanceLevel + 1);
+        }
+
+        try
+        {
+            var shpkPath = "shader/sm5/shpk/" + new ByteString(mtrlResourceHandle->ShpkString).ToString();
+            Logger.Verbose("Checking File Replacement for Shader " + shpkPath);
+            AddReplacementsFromShader(shpkPath, objectKind, cache, inheritanceLevel + 1);
+        }
+        catch
+        {
+            Logger.Verbose("Could not find shpk for Material " + fileName);
         }
     }
 
@@ -207,6 +217,23 @@ public class CharacterDataFactory
         DebugPrint(variousReplacement, objectKind, "Various", inheritanceLevel);
 
         cache.AddFileReplacement(objectKind, variousReplacement);
+    }
+
+    private void AddReplacementsFromShader(string shpkPath, ObjectKind objectKind, CharacterData cache, int inheritanceLevel = 0)
+    {
+        if (string.IsNullOrEmpty(shpkPath)) return;
+
+        if (cache.FileReplacements.ContainsKey(objectKind))
+        {
+            if (cache.FileReplacements[objectKind].Any(c => c.GamePaths.Contains(shpkPath, StringComparer.Ordinal)))
+            {
+                return;
+            }
+        }
+
+        var shpkFileReplacement = CreateFileReplacement(shpkPath, true);
+        DebugPrint(shpkFileReplacement, objectKind, "Shader", inheritanceLevel);
+        cache.AddFileReplacement(objectKind, shpkFileReplacement);
     }
 
     private void AddReplacementsFromTexture(string texPath, ObjectKind objectKind, CharacterData cache, int inheritanceLevel = 0, bool doNotReverseResolve = true)
@@ -281,7 +308,7 @@ public class CharacterDataFactory
 
             foreach (var item in previousData.FileReplacements[objectKind])
             {
-                transientResourceManager.RemoveTransientResource(charaPointer, item);
+                _transientResourceManager.RemoveTransientResource(charaPointer, item);
             }
 
             if (objectKind == ObjectKind.Player)
@@ -293,7 +320,7 @@ public class CharacterDataFactory
             {
                 foreach (var item in previousData.FileReplacements[objectKind])
                 {
-                    transientResourceManager.AddSemiTransientResource(objectKind, item);
+                    _transientResourceManager.AddSemiTransientResource(objectKind, item);
                 }
 
                 previousData.FileReplacements[objectKind].Clear();
@@ -315,9 +342,18 @@ public class CharacterDataFactory
 
     private unsafe void ManageSemiTransientData(CharacterData previousData, ObjectKind objectKind, IntPtr charaPointer)
     {
-        transientResourceManager.PersistTransientResources(charaPointer, objectKind, CreateFileReplacement);
+        _transientResourceManager.PersistTransientResources(charaPointer, objectKind, CreateFileReplacement);
 
-        foreach (var item in transientResourceManager.GetSemiTransientResources(objectKind))
+        // get rid of items that have no file replacements anymore
+        foreach (var entry in previousData.FileReplacements.ToList())
+        {
+            foreach (var item in entry.Value.ToList())
+            {
+                if (!item.HasFileReplacement) previousData.FileReplacements[entry.Key].Remove(item);
+            }
+        }
+
+        foreach (var item in _transientResourceManager.GetSemiTransientResources(objectKind))
         {
             if (!previousData.FileReplacements.ContainsKey(objectKind))
             {
@@ -331,7 +367,7 @@ public class CharacterDataFactory
                 if (string.Equals(penumResolve, gamePath, StringComparison.Ordinal))
                 {
                     Logger.Verbose("PenumResolve was same as GamePath, not adding " + item);
-                    transientResourceManager.RemoveTransientResource(charaPointer, item);
+                    _transientResourceManager.RemoveTransientResource(charaPointer, item);
                 }
                 else
                 {
@@ -354,10 +390,10 @@ public class CharacterDataFactory
 
             foreach (var item in previousData.FileReplacements[objectKind])
             {
-                transientResourceManager.RemoveTransientResource(charaPointer, item);
+                _transientResourceManager.RemoveTransientResource(charaPointer, item);
             }
 
-            foreach (var item in transientResourceManager.GetTransientResources((IntPtr)weaponObject))
+            foreach (var item in _transientResourceManager.GetTransientResources((IntPtr)weaponObject))
             {
                 Logger.Verbose("Found transient weapon resource: " + item);
                 AddReplacement(item, objectKind, previousData, 1, true);
@@ -371,10 +407,10 @@ public class CharacterDataFactory
 
                 foreach (var item in previousData.FileReplacements[objectKind])
                 {
-                    transientResourceManager.RemoveTransientResource((IntPtr)offHandWeapon, item);
+                    _transientResourceManager.RemoveTransientResource((IntPtr)offHandWeapon, item);
                 }
 
-                foreach (var item in transientResourceManager.GetTransientResources((IntPtr)offHandWeapon))
+                foreach (var item in _transientResourceManager.GetTransientResources((IntPtr)offHandWeapon))
                 {
                     Logger.Verbose("Found transient offhand weapon resource: " + item);
                     AddReplacement(item, objectKind, previousData, 1, true);
@@ -385,7 +421,7 @@ public class CharacterDataFactory
         AddReplacementSkeleton(((HumanExt*)human)->Human.RaceSexId, objectKind, previousData);
         try
         {
-            AddReplacementsFromTexture(new Utf8String(((HumanExt*)human)->Decal->FileName()).ToString(), objectKind, previousData, 0, false);
+            AddReplacementsFromTexture(new ByteString(((HumanExt*)human)->Decal->FileName()).ToString(), objectKind, previousData, 0, false);
         }
         catch
         {
@@ -393,7 +429,7 @@ public class CharacterDataFactory
         }
         try
         {
-            AddReplacementsFromTexture(new Utf8String(((HumanExt*)human)->LegacyBodyDecal->FileName()).ToString(), objectKind, previousData, 0, false);
+            AddReplacementsFromTexture(new ByteString(((HumanExt*)human)->LegacyBodyDecal->FileName()).ToString(), objectKind, previousData, 0, false);
         }
         catch
         {
@@ -402,7 +438,7 @@ public class CharacterDataFactory
 
         foreach (var item in previousData.FileReplacements[objectKind])
         {
-            transientResourceManager.RemoveTransientResource(charaPointer, item);
+            _transientResourceManager.RemoveTransientResource(charaPointer, item);
         }
     }
 
@@ -420,17 +456,14 @@ public class CharacterDataFactory
 
     private FileReplacement CreateFileReplacement(string path, bool doNotReverseResolve = false)
     {
-        var fileReplacement = new FileReplacement(fileDbManager);
+        var fileReplacement = _fileReplacementFactory.Create();
         if (!doNotReverseResolve)
         {
-            fileReplacement.GamePaths =
-                _ipcManager.PenumbraReverseResolvePlayer(path).ToList();
-            fileReplacement.SetResolvedPath(path);
+            fileReplacement.ReverseResolvePath(path);
         }
         else
         {
-            fileReplacement.GamePaths = new List<string> { path };
-            fileReplacement.SetResolvedPath(_ipcManager.PenumbraResolvePath(path)!);
+            fileReplacement.ResolvePath(path);
         }
 
         return fileReplacement;

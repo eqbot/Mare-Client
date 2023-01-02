@@ -1,11 +1,12 @@
 ﻿using MareSynchronos.API;
+using MareSynchronos.Factories;
 using MareSynchronos.Models;
 using MareSynchronos.Utils;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace MareSynchronos.Managers;
@@ -16,20 +17,70 @@ public class TransientResourceManager : IDisposable
 {
     private readonly IpcManager manager;
     private readonly DalamudUtil dalamudUtil;
+    private readonly string configurationDirectory;
 
     public event TransientResourceLoadedEvent? TransientResourceLoaded;
     public IntPtr[] PlayerRelatedPointers = Array.Empty<IntPtr>();
-    private readonly string[] FileTypesToHandle = new[] { "tmb", "pap", "avfx", "atex", "sklb", "eid", "phyb", "scd", "skp" };
+    private readonly string[] FileTypesToHandle = new[] { "tmb", "pap", "avfx", "atex", "sklb", "eid", "phyb", "scd", "skp", "shpk" };
+    private string PersistentDataCache => Path.Combine(configurationDirectory, "PersistentTransientData.lst");
 
     private ConcurrentDictionary<IntPtr, HashSet<string>> TransientResources { get; } = new();
     private ConcurrentDictionary<ObjectKind, HashSet<FileReplacement>> SemiTransientResources { get; } = new();
-    public TransientResourceManager(IpcManager manager, DalamudUtil dalamudUtil)
+    public TransientResourceManager(IpcManager manager, DalamudUtil dalamudUtil, FileReplacementFactory fileReplacementFactory, string configurationDirectory)
     {
         manager.PenumbraResourceLoadEvent += Manager_PenumbraResourceLoadEvent;
+        manager.PenumbraModSettingChanged += Manager_PenumbraModSettingChanged;
         this.manager = manager;
         this.dalamudUtil = dalamudUtil;
+        this.configurationDirectory = configurationDirectory;
         dalamudUtil.FrameworkUpdate += DalamudUtil_FrameworkUpdate;
         dalamudUtil.ClassJobChanged += DalamudUtil_ClassJobChanged;
+        if (File.Exists(PersistentDataCache))
+        {
+            var persistentEntities = File.ReadAllLines(PersistentDataCache);
+            SemiTransientResources.TryAdd(ObjectKind.Player, new HashSet<FileReplacement>());
+            int restored = 0;
+            foreach (var line in persistentEntities)
+            {
+                try
+                {
+                    var fileReplacement = fileReplacementFactory.Create();
+                    fileReplacement.ResolvePath(line);
+                    if (fileReplacement.HasFileReplacement)
+                    {
+                        Logger.Debug("Loaded persistent transient resource " + line);
+                        SemiTransientResources[ObjectKind.Player].Add(fileReplacement);
+                        restored++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("Error during loading persistent transient resource " + line, ex);
+                }
+            }
+
+            Logger.Debug($"Restored {restored}/{persistentEntities.Count()} semi persistent resources");
+        }
+    }
+
+    private void Manager_PenumbraModSettingChanged()
+    {
+        bool successfulValidation = true;
+        Task.Run(() =>
+        {
+            Logger.Debug("Penumbra Mod Settings changed, verifying SemiTransientResources");
+            foreach (var item in SemiTransientResources)
+            {
+                item.Value.RemoveWhere(p =>
+                {
+                    var verified = p.Verify();
+                    successfulValidation &= verified;
+                    return !verified;
+                });
+                if (!successfulValidation)
+                    TransientResourceLoaded?.Invoke(dalamudUtil.PlayerPointer);
+            }
+        });
     }
 
     private void DalamudUtil_ClassJobChanged()
@@ -106,8 +157,10 @@ public class TransientResourceManager : IDisposable
         var replacedGamePath = gamePath.ToLowerInvariant().Replace("\\", "/", StringComparison.OrdinalIgnoreCase);
 
         if (TransientResources[gameObject].Contains(replacedGamePath) ||
-            SemiTransientResources.Any(r => r.Value.Any(f => string.Equals(f.GamePaths.First(), replacedGamePath, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(f.ResolvedPath, filePath, StringComparison.OrdinalIgnoreCase))))
+            SemiTransientResources.Any(r => r.Value.Any(f =>
+                string.Equals(f.GamePaths.First(), replacedGamePath, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(f.ResolvedPath, filePath, StringComparison.OrdinalIgnoreCase))
+            ))
         {
             Logger.Verbose("Not adding " + replacedGamePath + ":" + filePath);
             Logger.Verbose("SemiTransientAny: " + SemiTransientResources.Any(r => r.Value.Any(f => string.Equals(f.GamePaths.First(), replacedGamePath, StringComparison.OrdinalIgnoreCase)
@@ -174,12 +227,14 @@ public class TransientResourceManager : IDisposable
             }
             catch (Exception ex)
             {
-                Logger.Warn("Issue during transient file persistence");
-                Logger.Warn(ex.Message);
-                Logger.Warn(ex.StackTrace.ToString());
+                Logger.Warn("Issue during transient file persistence", ex);
             }
         }
 
+        if (objectKind == ObjectKind.Player && SemiTransientResources.TryGetValue(ObjectKind.Player, out var fileReplacements))
+        {
+            File.WriteAllLines(PersistentDataCache, fileReplacements.SelectMany(p => p.GamePaths).Distinct(StringComparer.OrdinalIgnoreCase));
+        }
         TransientResources[gameObject].Clear();
     }
 
@@ -188,7 +243,13 @@ public class TransientResourceManager : IDisposable
         dalamudUtil.FrameworkUpdate -= DalamudUtil_FrameworkUpdate;
         manager.PenumbraResourceLoadEvent -= Manager_PenumbraResourceLoadEvent;
         dalamudUtil.ClassJobChanged -= DalamudUtil_ClassJobChanged;
+        manager.PenumbraModSettingChanged -= Manager_PenumbraModSettingChanged;
         TransientResources.Clear();
+        SemiTransientResources.Clear();
+        if (SemiTransientResources.ContainsKey(ObjectKind.Player))
+        {
+            File.WriteAllLines(PersistentDataCache, SemiTransientResources[ObjectKind.Player].SelectMany(p => p.GamePaths).Distinct(StringComparer.OrdinalIgnoreCase));
+        }
     }
 
     internal void AddSemiTransientResource(ObjectKind objectKind, FileReplacement item)

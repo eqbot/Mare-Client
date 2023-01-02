@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -38,45 +39,81 @@ public partial class ApiController
 
     public async Task FilesDeleteAll()
     {
+        _verifiedUploadedHashes.Clear();
         await _mareHub!.SendAsync(nameof(FilesDeleteAll)).ConfigureAwait(false);
     }
 
-    private async Task<string> DownloadFile(int downloadId, string hash, Uri downloadUri, CancellationToken ct)
+    private async Task<string> DownloadFileHttpClient(Uri url, IProgress<long> progress, CancellationToken ct)
     {
-        using WebClient wc = new();
-        wc.Headers.Add("Authorization", SecretKey);
-        DownloadProgressChangedEventHandler progChanged = (s, e) =>
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.Add(AuthorizationJwtHeader.Key, AuthorizationJwtHeader.Value);
+        int attempts = 0;
+        bool failed = true;
+        const int maxAttempts = 10;
+
+        HttpResponseMessage response = null!;
+        HttpStatusCode? lastError = HttpStatusCode.OK;
+        var bypassUrl = new Uri(url, "?nocache=" + DateTime.UtcNow.Ticks);
+
+        while (failed && attempts < maxAttempts && !ct.IsCancellationRequested)
         {
             try
             {
-                CurrentDownloads[downloadId].Single(f => string.Equals(f.Hash, hash, StringComparison.Ordinal)).Transferred = e.BytesReceived;
+                response = await client.GetAsync(bypassUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                failed = false;
             }
-            catch (Exception ex)
+            catch (HttpRequestException ex)
             {
-                Logger.Warn("Could not set download progress for " + hash);
-                Logger.Warn(ex.Message);
-                Logger.Warn(ex.StackTrace ?? string.Empty);
+                Logger.Warn($"Attempt {attempts}: Error during download of {bypassUrl}, HttpStatusCode: {ex.StatusCode}");
+                lastError = ex.StatusCode;
+                if (ex.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Unauthorized)
+                {
+                    break;
+                }
+                attempts++;
+                await Task.Delay(TimeSpan.FromSeconds(new Random().Next(1, 5)), ct).ConfigureAwait(false);
             }
-        };
-        wc.DownloadProgressChanged += progChanged;
+        }
 
-        string fileName = Path.GetTempFileName();
+        if (failed)
+        {
+            throw new Exception($"Http error {lastError} after {maxAttempts} attempts (cancelled: {ct.IsCancellationRequested}): {url}");
+        }
 
-        ct.Register(wc.CancelAsync);
-
+        var fileName = Path.GetTempFileName();
         try
         {
-            await wc.DownloadFileTaskAsync(downloadUri, fileName).ConfigureAwait(false);
-        }
-        catch (Exception ex) {
-            Logger.Warn(ex.Message);
-            Logger.Warn(ex.StackTrace);
-        }
+            var fileStream = File.Create(fileName);
+            await using (fileStream.ConfigureAwait(false))
+            {
+                var bufferSize = response.Content.Headers.ContentLength > 1024 * 1024 ? 4096 : 1024;
+                var buffer = new byte[bufferSize];
 
-        CurrentDownloads[downloadId].Single(f => string.Equals(f.Hash, hash, StringComparison.Ordinal)).Transferred = CurrentDownloads[downloadId].Single(f => string.Equals(f.Hash, hash, StringComparison.Ordinal)).Total;
+                var bytesRead = 0;
+                while ((bytesRead = await (await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false)).ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                {
+                    ct.ThrowIfCancellationRequested();
 
-        wc.DownloadProgressChanged -= progChanged;
-        return fileName;
+                    await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
+
+                    progress.Report(bytesRead);
+                }
+
+                Logger.Debug($"{bypassUrl} downloaded to {fileName}");
+                return fileName;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"Error during file download of {bypassUrl}", ex);
+            try
+            {
+                File.Delete(fileName);
+            }
+            catch { }
+            throw;
+        }
     }
 
     public int GetDownloadId() => _downloadId++;
@@ -120,18 +157,23 @@ public partial class ApiController
 
         await Parallel.ForEachAsync(CurrentDownloads[currentDownloadId].Where(f => f.CanBeTransferred), new ParallelOptions()
         {
-            MaxDegreeOfParallelism = 5,
+            MaxDegreeOfParallelism = 2,
             CancellationToken = ct
         },
         async (file, token) =>
         {
+            Logger.Debug($"Downloading {file.DownloadUri}");
             var hash = file.Hash;
-            var tempFile = await DownloadFile(currentDownloadId, file.Hash, file.DownloadUri, token).ConfigureAwait(false);
+            Progress<long> progress = new((bytesDownloaded) =>
+            {
+                file.Transferred += bytesDownloaded;
+            });
+
+            var tempFile = await DownloadFileHttpClient(file.DownloadUri, progress, token).ConfigureAwait(false);
             if (token.IsCancellationRequested)
             {
                 File.Delete(tempFile);
                 Logger.Debug("Detected cancellation, removing " + currentDownloadId);
-                DownloadFinished?.Invoke();
                 CancelDownload(currentDownloadId);
                 return;
             }
@@ -317,7 +359,7 @@ public partial class ApiController
 
     public async Task FilesUploadStreamAsync(string hash, IAsyncEnumerable<byte[]> fileContent)
     {
-        await _mareHub!.SendAsync(nameof(FilesUploadStreamAsync), hash, fileContent).ConfigureAwait(false);
+        await _mareHub!.InvokeAsync(nameof(FilesUploadStreamAsync), hash, fileContent).ConfigureAwait(false);
     }
 
     public async Task<bool> FilesIsUploadFinished()

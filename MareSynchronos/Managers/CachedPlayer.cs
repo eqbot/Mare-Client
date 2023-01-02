@@ -166,6 +166,8 @@ public class CachedPlayer
                 //Logger.Verbose(JsonConvert.SerializeObject(_cachedData, Formatting.Indented));
                 while ((toDownloadReplacements = TryCalculateModdedDictionary(out moddedPaths)).Count > 0 && attempts++ <= 10)
                 {
+                    downloadId = _apiController.GetDownloadId();
+
                     Logger.Debug("Downloading missing files for player " + PlayerName + ", kind: " + objectKind);
                     if (toDownloadReplacements.Any())
                     {
@@ -182,6 +184,8 @@ public class CachedPlayer
                     {
                         break;
                     }
+
+                    await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
                 }
 
                 ApplyBaseData(moddedPaths);
