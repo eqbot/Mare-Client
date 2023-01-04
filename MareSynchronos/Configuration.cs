@@ -86,7 +86,7 @@ public class Configuration : IPluginConfiguration
     public int Version { get; set; } = 5;
 
     public bool ShowTransferWindow { get; set; } = true;
-    public bool OpenPopupOnAdd { get; set; } = false;
+    public bool OpenPopupOnAdd { get; set; } = true;
     public bool DisableVFXGlobal { get; set; } = false;
 
     // the below exist just to make saving less cumbersome
