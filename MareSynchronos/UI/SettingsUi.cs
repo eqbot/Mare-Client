@@ -29,6 +29,8 @@ public class SettingsUi : Window, IDisposable
     private bool? _notesSuccessfullyApplied = null;
     private string _lastTab = string.Empty;
     private bool _openPopupOnAddition;
+    private bool _hideInfoMessages;
+    private bool _disableOptionalPluginsWarnings;
     private bool _disableVFXGlobal;
 
     public SettingsUi(WindowSystem windowSystem,
@@ -47,6 +49,8 @@ public class SettingsUi : Window, IDisposable
         _apiController = apiController;
         _uiShared = uiShared;
         _openPopupOnAddition = _configuration.OpenPopupOnAdd;
+        _hideInfoMessages = _configuration.HideInfoMessages;
+        _disableOptionalPluginsWarnings = _configuration.DisableOptionalPluginWarnings;
         _disableVFXGlobal = _configuration.DisableVFXGlobal;
         windowSystem.AddWindow(this);
     }
@@ -174,6 +178,19 @@ public class SettingsUi : Window, IDisposable
             _configuration.Save();
             ChangeVFX?.Invoke();
         }
+
+        if (ImGui.Checkbox("Hide Server Info Messages", ref _hideInfoMessages))
+        {
+            _configuration.HideInfoMessages = _hideInfoMessages;
+            _configuration.Save();
+        }
+        UiShared.DrawHelpText("Enabling this will not print any \"Info\" labeled messages into the game chat.");
+        if (ImGui.Checkbox("Disable optional plugin warnings", ref _disableOptionalPluginsWarnings))
+        {
+            _configuration.DisableOptionalPluginWarnings = _disableOptionalPluginsWarnings;
+            _configuration.Save();
+        }
+        UiShared.DrawHelpText("Enabling this will not print any \"Warning\" labeled messages for missing optional plugins Heels or Customize+ in the game chat.");
     }
 
     private void DrawAdministration()
@@ -453,7 +470,7 @@ public class SettingsUi : Window, IDisposable
 
                 var buttonSize = (ImGui.GetWindowContentRegionMax().X - ImGui.GetWindowContentRegionMin().X -
                                  ImGui.GetStyle().ItemSpacing.X) / 2;
-                
+
                 if (ImGui.Button("Delete everything", new Vector2(buttonSize, 0)))
                 {
                     Task.Run(() => _apiController.FilesDeleteAll());
@@ -487,10 +504,10 @@ public class SettingsUi : Window, IDisposable
                 ImGui.Text("Are you sure you want to continue?");
                 ImGui.Separator();
                 ImGui.Spacing();
-                
+
                 var buttonSize = (ImGui.GetWindowContentRegionMax().X - ImGui.GetWindowContentRegionMin().X -
                                   ImGui.GetStyle().ItemSpacing.X) / 2;
-                
+
                 if (ImGui.Button("Delete account", new Vector2(buttonSize, 0)))
                 {
                     Task.Run(() => _apiController.UserDelete());
@@ -664,16 +681,22 @@ public class SettingsUi : Window, IDisposable
         ImGui.SameLine();
         if (ImGui.Button("Clear local cache"))
         {
-            Task.Run(() =>
+            if (UiShared.CtrlPressed())
             {
-                foreach (var file in Directory.GetFiles(_configuration.CacheFolder))
+                Task.Run(() =>
                 {
-                    File.Delete(file);
-                }
+                    foreach (var file in Directory.GetFiles(_configuration.CacheFolder))
+                    {
+                        File.Delete(file);
+                    }
 
-                _uiShared.RecalculateFileCacheSize();
-            });
+                    _uiShared.RecalculateFileCacheSize();
+                });
+            }
         }
+        UiShared.AttachToolTip("You normally do not need to do this. This will solely remove all downloaded data from all players and will require you to re-download everything again." + Environment.NewLine
+            + "Mares Cache is self-clearing and will not surpass the limit you have set it to." + Environment.NewLine
+            + "If you still think you need to do this hold CTRL while pressing the button.");
     }
 
     public override void OnClose()

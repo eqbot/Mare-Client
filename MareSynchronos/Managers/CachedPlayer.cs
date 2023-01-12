@@ -63,7 +63,7 @@ public class CachedPlayer
 
     private PlayerRelatedObject? _currentCharacterEquipment;
 
-    public void ApplyCharacterData(CharacterCacheDto characterData)
+    public void ApplyCharacterData(CharacterCacheDto characterData, OptionalPluginWarning warning)
     {
         Logger.Debug("Received data for " + this);
 
@@ -124,6 +124,7 @@ public class CachedPlayer
                 bool heelsOffsetDifferent = _cachedData.HeelsOffset != characterData.HeelsOffset;
                 if (heelsOffsetDifferent)
                 {
+
                     Logger.Debug("Updating " + objectKind);
                     charaDataToUpdate.Add(objectKind);
                     continue;
@@ -136,6 +137,23 @@ public class CachedPlayer
                     charaDataToUpdate.Add(objectKind);
                     continue;
                 }
+            }
+        }
+
+        if (characterData.HeelsOffset != default)
+        {
+            if (!warning.ShownHeelsWarning && !_ipcManager.CheckHeelsApi())
+            {
+                _dalamudUtil.PrintWarnChat("Received Heels data for player " + PlayerName + ", but Heels is not installed. Install Heels to experience their character fully.");
+                warning.ShownHeelsWarning = true;
+            }
+        }
+        if (!string.IsNullOrEmpty(characterData.CustomizePlusData))
+        {
+            if (!warning.ShownCustomizePlusWarning && !_ipcManager.CheckCustomizePlusApi())
+            {
+                _dalamudUtil.PrintWarnChat("Received Customize+ data for player " + PlayerName + ", but Customize+ is not installed. Install Customize+ to experience their character fully.");
+                warning.ShownCustomizePlusWarning = true;
             }
         }
 
@@ -442,7 +460,7 @@ public class CachedPlayer
         }
     }
 
-    public void InitializePlayer(IntPtr character, string name, CharacterCacheDto? cache)
+    public void InitializePlayer(IntPtr character, string name, CharacterCacheDto? cache, OptionalPluginWarning displayedChatWarning)
     {
         if (!_isDisposed) return;
         IsVisible = true;
@@ -458,7 +476,7 @@ public class CachedPlayer
         _isDisposed = false;
         if (cache != null)
         {
-            ApplyCharacterData(cache);
+            ApplyCharacterData(cache, displayedChatWarning);
         }
     }
 

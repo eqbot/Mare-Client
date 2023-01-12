@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MareSynchronos.API;
 using MareSynchronos.FileCache;
+using MareSynchronos.Models;
 using MareSynchronos.UI;
 using MareSynchronos.Utils;
 using MareSynchronos.WebAPI;
@@ -25,11 +26,12 @@ public class OnlinePlayerManager : IDisposable
     private readonly ConcurrentDictionary<string, CachedPlayer> _onlineCachedPlayers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CharacterCacheDto> _temporaryStoredCharacterCache = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<CachedPlayer, CancellationTokenSource> _playerTokenDisposal = new();
+    private readonly ConcurrentDictionary<string, OptionalPluginWarning> _shownWarnings = new(StringComparer.Ordinal);
 
     private List<string> OnlineVisiblePlayerHashes => _onlineCachedPlayers.Select(p => p.Value).Where(p => p.PlayerCharacter != IntPtr.Zero)
         .Select(p => p.PlayerNameHash).ToList();
 
-    public OnlinePlayerManager(ApiController apiController, DalamudUtil dalamudUtil, IpcManager ipcManager, Configuration configuration, PlayerManager playerManager, FileCacheManager fileDbManager, SettingsUi settingUi)
+    public OnlinePlayerManager(ApiController apiController, DalamudUtil dalamudUtil, IpcManager ipcManager, PlayerManager playerManager, FileCacheManager fileDbManager, Configuration configuration, SettingsUi settingUi)
     {
         Logger.Verbose("Creating " + nameof(OnlinePlayerManager));
 
@@ -73,10 +75,15 @@ public class OnlinePlayerManager : IDisposable
 
     private void ApiControllerOnCharacterReceived(object? sender, CharacterReceivedEventArgs e)
     {
+        if (!_shownWarnings.ContainsKey(e.CharacterNameHash)) _shownWarnings[e.CharacterNameHash] = new()
+        {
+            ShownCustomizePlusWarning = _configuration.DisableOptionalPluginWarnings,
+            ShownHeelsWarning = _configuration.DisableOptionalPluginWarnings,
+        };
         if (_onlineCachedPlayers.TryGetValue(e.CharacterNameHash, out var visiblePlayer) && visiblePlayer.IsVisible)
         {
             Logger.Debug("Received data and applying to " + e.CharacterNameHash);
-            visiblePlayer.ApplyCharacterData(e.CharacterData);
+            visiblePlayer.ApplyCharacterData(e.CharacterData, _shownWarnings[e.CharacterNameHash]);
         }
         else
         {
@@ -218,7 +225,12 @@ public class OnlinePlayerManager : IDisposable
             if (existingPlayer != null)
             {
                 _temporaryStoredCharacterCache.TryRemove(hashedName, out var cache);
-                existingPlayer.InitializePlayer(pChar.Address, pChar.Name.ToString(), cache);
+                if (!_shownWarnings.ContainsKey(hashedName)) _shownWarnings[hashedName] = new()
+                {
+                    ShownCustomizePlusWarning = _configuration.DisableOptionalPluginWarnings,
+                    ShownHeelsWarning = _configuration.DisableOptionalPluginWarnings,
+                };
+                existingPlayer.InitializePlayer(pChar.Address, pChar.Name.ToString(), cache, _shownWarnings[hashedName]);
             }
         }
 
