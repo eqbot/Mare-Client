@@ -12,6 +12,7 @@ using MareSynchronos.API;
 using MareSynchronos.Utils;
 using MareSynchronos.WebAPI.Utils;
 using Dalamud.Utility;
+using Newtonsoft.Json;
 
 namespace MareSynchronos.UI;
 
@@ -23,6 +24,8 @@ public class SettingsUi : Window, IDisposable
     private readonly WindowSystem _windowSystem;
     private readonly ApiController _apiController;
     private readonly UiShared _uiShared;
+    public CharacterCacheDto LastCreatedCharacterData { private get; set; }
+
     public event SwitchUi? SwitchToIntroUi;
     public event ChangeVFXEnabled? ChangeVFX;
     private bool _overwriteExistingLabels = false;
@@ -554,6 +557,19 @@ public class SettingsUi : Window, IDisposable
         {
             _uiShared.DrawServiceSelection(() => { });
         }
+
+        if (UiShared.IconTextButton(FontAwesomeIcon.Copy, "[DEBUG] Copy Last created Character Data to clipboard"))
+        {
+            if (LastCreatedCharacterData != null)
+            {
+                ImGui.SetClipboardText(JsonConvert.SerializeObject(LastCreatedCharacterData, Formatting.Indented));
+            }
+            else
+            {
+                ImGui.SetClipboardText("ERROR: No created character data, cannot copy.");
+            }
+        }
+        UiShared.AttachToolTip("Use this when reporting mods being rejected from the server.");
     }
 
     private void DrawBlockedTransfers()
