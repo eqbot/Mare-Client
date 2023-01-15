@@ -215,8 +215,11 @@ public class CachedPlayer
             {
                 ApplyCustomizationData(kind, downloadToken);
             }
+
         }, downloadToken).ContinueWith(task =>
         {
+            _downloadCancellationTokenSource = null;
+
             if (!task.IsCanceled) return;
 
             Logger.Debug("Download Task was cancelled");
@@ -439,6 +442,7 @@ public class CachedPlayer
             _ipcManager.PenumbraRemoveTemporaryCollection(PlayerName);
             _downloadCancellationTokenSource?.Cancel();
             _downloadCancellationTokenSource?.Dispose();
+            _downloadCancellationTokenSource = null;
             if (PlayerCharacter != IntPtr.Zero)
             {
                 foreach (var item in _cachedData.FileReplacements)
