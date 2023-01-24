@@ -11,6 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Utility;
 using LZ4;
 using MareSynchronos.API;
 using MareSynchronos.Utils;
@@ -49,7 +50,7 @@ public partial class ApiController
 
     private async Task<Guid> GetQueueRequest(DownloadFileTransfer downloadFileTransfer, CancellationToken ct)
     {
-        var response = await SendRequestAsync<object>(HttpMethod.Get, MareFiles.RequestRequestFileFullPath(downloadFileTransfer.DownloadUri, downloadFileTransfer.Hash), ct: ct).ConfigureAwait(false);
+        var response = await SendRequestAsync(HttpMethod.Get, MareFiles.RequestRequestFileFullPath(downloadFileTransfer.DownloadUri, downloadFileTransfer.Hash), ct).ConfigureAwait(false);
         var responseString = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var requestId = Guid.Parse(responseString.Trim('"'));
         if (!_downloadReady.ContainsKey(requestId))
@@ -59,16 +60,44 @@ public partial class ApiController
         return requestId;
     }
 
-    private async Task WaitForDownloadReady(DownloadFileTransfer downloadFileTransfer, Guid requestId, CancellationToken ct)
+    private async Task WaitForDownloadReady(DownloadFileTransfer downloadFileTransfer, Guid requestId, CancellationToken downloadCt)
     {
         bool alreadyCancelled = false;
         try
         {
-            while (!ct.IsCancellationRequested && _downloadReady.TryGetValue(requestId, out bool isReady) && !isReady)
+            CancellationTokenSource localTimeoutCts = new();
+            localTimeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+            CancellationTokenSource composite = CancellationTokenSource.CreateLinkedTokenSource(downloadCt, localTimeoutCts.Token);
+
+            while (_downloadReady.TryGetValue(requestId, out bool isReady) && !isReady)
             {
-                Logger.Verbose($"Waiting for {requestId} to become ready for download");
-                await Task.Delay(250, ct).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(250, composite.Token).ConfigureAwait(false);
+                }
+                catch (TaskCanceledException)
+                {
+                    if (downloadCt.IsCancellationRequested) throw;
+
+                    var req = await SendRequestAsync(HttpMethod.Get, MareFiles.RequestCheckQueueFullPath(downloadFileTransfer.DownloadUri, requestId, downloadFileTransfer.Hash), downloadCt).ConfigureAwait(false);
+                    try
+                    {
+                        req.EnsureSuccessStatusCode();
+                        localTimeoutCts.Dispose();
+                        composite.Dispose();
+                        localTimeoutCts = new();
+                        localTimeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+                        composite = CancellationTokenSource.CreateLinkedTokenSource(downloadCt, localTimeoutCts.Token);
+                    }
+                    catch (HttpRequestException)
+                    {
+                        throw;
+                    }
+                }
             }
+
+            localTimeoutCts.Dispose();
+            composite.Dispose();
 
             Logger.Debug($"Download {requestId} ready");
         }
@@ -76,7 +105,7 @@ public partial class ApiController
         {
             try
             {
-                await SendRequestAsync<object>(HttpMethod.Get, MareFiles.RequestCancelFullPath(downloadFileTransfer.DownloadUri, requestId), ct).ConfigureAwait(false);
+                await SendRequestAsync(HttpMethod.Get, MareFiles.RequestCancelFullPath(downloadFileTransfer.DownloadUri, requestId)).ConfigureAwait(false);
                 alreadyCancelled = true;
             }
             catch { }
@@ -85,11 +114,11 @@ public partial class ApiController
         }
         finally
         {
-            if (ct.IsCancellationRequested && !alreadyCancelled)
+            if (downloadCt.IsCancellationRequested && !alreadyCancelled)
             {
                 try
                 {
-                    await SendRequestAsync<object>(HttpMethod.Get, MareFiles.RequestCancelFullPath(downloadFileTransfer.DownloadUri, requestId), ct).ConfigureAwait(false);
+                    await SendRequestAsync(HttpMethod.Get, MareFiles.RequestCancelFullPath(downloadFileTransfer.DownloadUri, requestId)).ConfigureAwait(false);
                 }
                 catch { }
             }
@@ -97,7 +126,7 @@ public partial class ApiController
         }
     }
 
-    private async Task<string> DownloadFileHttpClient(DownloadFileTransfer fileTransfer, IProgress<long> progress, CancellationToken ct)
+    private async Task DownloadFileHttpClient(DownloadFileTransfer fileTransfer, string tempPath, IProgress<long> progress, CancellationToken ct)
     {
         var requestId = await GetQueueRequest(fileTransfer, ct).ConfigureAwait(false);
 
@@ -111,7 +140,7 @@ public partial class ApiController
         Logger.Debug($"Downloading {requestUrl} for file {fileTransfer.Hash}");
         try
         {
-            response = await SendRequestAsync<object>(HttpMethod.Get, requestUrl, ct: ct).ConfigureAwait(false);
+            response = await SendRequestAsync(HttpMethod.Get, requestUrl, ct).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
         }
         catch (HttpRequestException ex)
@@ -123,10 +152,9 @@ public partial class ApiController
             }
         }
 
-        var fileName = Path.GetTempFileName();
         try
         {
-            var fileStream = File.Create(fileName);
+            var fileStream = File.Create(tempPath);
             await using (fileStream.ConfigureAwait(false))
             {
                 var bufferSize = response.Content.Headers.ContentLength > 1024 * 1024 ? 4096 : 1024;
@@ -142,8 +170,7 @@ public partial class ApiController
                     progress.Report(bytesRead);
                 }
 
-                Logger.Debug($"{requestUrl} downloaded to {fileName}");
-                return fileName;
+                Logger.Debug($"{requestUrl} downloaded to {tempPath}");
             }
         }
         catch (Exception ex)
@@ -151,7 +178,8 @@ public partial class ApiController
             Logger.Warn($"Error during file download of {requestUrl}", ex);
             try
             {
-                File.Delete(fileName);
+                if (!tempPath.IsNullOrEmpty())
+                    File.Delete(tempPath);
             }
             catch { }
             throw;
@@ -177,28 +205,35 @@ public partial class ApiController
         }
     }
 
-    private async Task<HttpResponseMessage> SendRequestAsync<T>(HttpMethod method, Uri uri, T content = default, CancellationToken? ct = null) where T : class
+    private async Task<HttpResponseMessage> SendRequestAsync(HttpMethod method, Uri uri, CancellationToken? ct = null)
     {
         using var requestMessage = new HttpRequestMessage(method, uri);
-        if (content != default)
-        {
-            requestMessage.Content = JsonContent.Create(content);
-        }
-        requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Authorization);
+        return await SendRequestInternalAsync(requestMessage, ct).ConfigureAwait(false);
+    }
 
-        if (content != default)
+    private async Task<HttpResponseMessage> SendRequestInternalAsync(HttpRequestMessage requestMessage, CancellationToken? ct = null)
+    {
+        requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", this.Authorization);
+
+        if (requestMessage.Content != null)
         {
-            Logger.Debug("Sending " + method + " to " + uri + " (Content: " + await (((JsonContent)requestMessage.Content).ReadAsStringAsync()) + ")");
+            Logger.Debug("Sending " + requestMessage.Method + " to " + requestMessage.RequestUri + " (Content: " + await (((JsonContent)requestMessage.Content).ReadAsStringAsync()) + ")");
         }
         else
         {
-            Logger.Debug("Sending " + method + " to " + uri);
+            Logger.Debug("Sending " + requestMessage.Method + " to " + requestMessage.RequestUri);
         }
 
-        if (ct.HasValue)
+        if(ct != null)
             return await _httpClient.SendAsync(requestMessage, ct.Value).ConfigureAwait(false);
-
         return await _httpClient.SendAsync(requestMessage).ConfigureAwait(false);
+    }
+
+    private async Task<HttpResponseMessage> SendRequestAsync<T>(HttpMethod method, Uri uri, T content, CancellationToken ct) where T : class
+    {
+        using var requestMessage = new HttpRequestMessage(method, uri);
+        requestMessage.Content = JsonContent.Create(content);
+        return await SendRequestInternalAsync(requestMessage, ct).ConfigureAwait(false);
     }
 
     private async Task DownloadFilesInternal(int currentDownloadId, List<FileReplacementDto> fileReplacementDto, CancellationToken ct)
@@ -242,18 +277,27 @@ public partial class ApiController
                     file.Transferred += bytesDownloaded;
                 });
 
-                var tempFile = await DownloadFileHttpClient(file, progress, token).ConfigureAwait(false);
-                if (token.IsCancellationRequested)
+                var tempPath = Path.Combine(_pluginConfiguration.CacheFolder, file.Hash + ".tmp");
+                try
                 {
-                    File.Delete(tempFile);
-                    Logger.Debug("Detetokened cancellation, removing " + currentDownloadId);
+                    await DownloadFileHttpClient(file, tempPath, progress, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    File.Delete(tempPath);
+                    Logger.Debug("Detected cancellation, removing " + currentDownloadId);
                     CancelDownload(currentDownloadId);
                     return;
                 }
+                catch (Exception ex)
+                {
+                    Logger.Error("Error during download of " + file.Hash, ex);
+                    return;
+                }
 
-                var tempFileData = await File.ReadAllBytesAsync(tempFile, token).ConfigureAwait(false);
+                var tempFileData = await File.ReadAllBytesAsync(tempPath, token).ConfigureAwait(false);
                 var extratokenedFile = LZ4Codec.Unwrap(tempFileData);
-                File.Delete(tempFile);
+                File.Delete(tempPath);
                 var filePath = Path.Combine(_pluginConfiguration.CacheFolder, file.Hash);
                 await File.WriteAllBytesAsync(filePath, extratokenedFile, token).ConfigureAwait(false);
                 var fi = new FileInfo(filePath);
